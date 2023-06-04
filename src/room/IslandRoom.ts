@@ -1,31 +1,32 @@
-import { Client, Room, ServerError, matchMaker } from 'colyseus'
-import { IncomingMessage } from 'http'
+import { DataChange } from '@colyseus/schema'
+import { Client, Room } from 'colyseus'
 import { DI } from '../config/db.config'
-import { MsgTopic } from '../entity/MsgTopics'
-import { Vector, Vector2, Vector3 } from '../misc/Vectors'
+import { V2, V3, Vector } from '../misc/Vectors'
+import { Game } from '../model'
 import { getStateForType } from './InteractableObjectFactory'
-import { AvatarState } from './schema/AvatarState'
-import { Position } from './schema/Position'
-import { InteractableState, NetworkedEntityState, RoomState } from './schema/RoomState'
+import { IslandState, PlayerState, PropState } from './schema/IslandState'
+import { MsgTopic } from './schema/MsgTopics'
+import { ProfileState } from './schema/UserState'
+import { cli } from 'winston/lib/winston/config'
 
 
-export class IslandRoom extends Room<RoomState> {
+export class IslandRoom extends Room<IslandState> {
 
-  progress: string
-
+  islandId: string
   defObjReset = 5000
 
   onCreate(options: any): void | Promise<any> {
-    this.setState(new RoomState())
+    console.log(options)
 
-    if (options['roomId'] != null) {
-      this.roomId = options['roomId']
+    if (options['islandId'] != null) {
+      this.islandId = options['islandId']
     }
 
     this.maxClients = 200
-    this.progress = options['progress'] || '0,0'
 
-    this.setState(new RoomState())
+    this.setState(new IslandState())
+
+    this.state.id = this.islandId
 
     this.register4Message()
 
@@ -36,69 +37,54 @@ export class IslandRoom extends Room<RoomState> {
     })
   }
 
-  async onAuth(client: Client<any>, options: any, request?: IncomingMessage) {
-    let account = await DI.accountRepo.findOne({ pendingSessionId: client.sessionId })
-    if (account) {
-      account.activeSessionId = client.sessionId
-      account.pendingSessionId = ''
+  // async onAuth(client: Client<any>, options: any, request?: IncomingMessage) {
+  // let account = await DI.accountRepo.findOne({ pendingSessionId: client.sessionId })
+  // if (account) {
+  //   account.activeSessionId = client.sessionId
+  //   account.pendingSessionId = ''
 
-      await DI.em.flush()
+  //   await DI.em.flush()
 
-      return account
-    } else {
-      throw new ServerError(400, "Bad session!")
-    }
-  }
+  //   return account
+  // } else {
+  //   throw new ServerError(400, "Bad session!")
+  // }
+  // }
 
   async onJoin(client: Client<any>, options?: any, auth?: any) {
-    let user = await DI.userRepo.findOne(auth.id)
-    let networkedUser = new NetworkedEntityState().assign({
-      id: client.id,
+    let user = await DI.userRepo.findOne({ id: options['uid'] })
+    let player = new PlayerState().assign({
+      clientId: client.id,
       timestamp: this.state.serverTime,
+    })
+
+    player.assign({ px: options['px'], py: options['py'], pz: options['pz'], })
+
+    player.assign({ dx: 0, dy: 0, dz: 0, })
+
+    player.profile = new ProfileState().assign({
+      uid: user.id,
+      prefab: user.prefab,
+      skin: user.skin,
       username: user.username
     })
 
-    if (user.position != null) {
-      networkedUser.assign({
-        xPos: user.position.x,
-        yPos: user.position.y,
-        zPos: user.position.z,
-      })
-
-    }
-
-    if (user.rotation != null) {
-      networkedUser.assign({
-        xRot: user.rotation.x,
-        yRot: user.rotation.y,
-        zRot: user.rotation.z,
-      })
-
-    }
-
-    if (user.avatar) {
-      networkedUser.avatar = new AvatarState().assign({
-        model: user.avatar.model,
-        skin: user.avatar.skin
-      })
-    }
-    networkedUser.coins = user.coins || 0
-    this.state.networkedUsers.set(client.id, networkedUser)
+    this.state.players.set(player.profile.uid, player)
   }
 
   async onLeave(client: Client<any>, consented?: boolean) {
-    let account = await DI.accountRepo.findOne({ activeSessionId: client.sessionId })
-    let user = await DI.userRepo.findOne({ accountId: account.id })
-    if (account) {
-      account.activeSessionId = ''
-    }
+    // let account = await DI.accountRepo.findOne({ activeSessionId: client.sessionId })
+    // let user = await DI.userRepo.findOne({ accountId: account.id })
+    // if (account) {
+    //   account.activeSessionId = ''
+    // }
 
-    if (user) {
-      user.position = this.state.getUserPosition(client.sessionId)
-      user.rotation = this.state.getUserRotation(client.sessionId)
-    }
+    // if (user) {
+    //   user.position = this.state.getUserPosition(client.sessionId)
+    //   user.rotation = this.state.getUserRotation(client.sessionId)
+    // }
 
-    await DI.em.flush()
+    // await DI.em.flush()
 
     try {
       if (consented) {
@@ -109,8 +95,12 @@ export class IslandRoom extends Room<RoomState> {
       console.log(`reconnected! client: ${newClient.id}`)
     } catch (err) {
       console.log(`*** Removing Networked User and Entity ${client.id} ***`)
-      let state2Leave = this.state.networkedUsers.get(client.id)
-      if (state2Leave) { this.state.networkedUsers.delete(client.id) }
+
+      let uid: string = null
+      for (let item of this.state.players.values()) {
+        if (item.clientId == client.id) uid = item.profile.uid
+      }
+      if (uid) { this.state.players.delete(uid) }
     }
   }
 
@@ -118,73 +108,81 @@ export class IslandRoom extends Room<RoomState> {
     console.log(`room ${this.roomId} disposing...`)
   }
 
+  private test(changes: DataChange<any, string>[]) {
+    console.log(changes)
+  }
+
   private register4Message() {
-    this.onMessage(MsgTopic.EntityUpdate, (client, data) => {
-      if (!this.state.networkedUsers.has(`${data[0]}`)) return
-      this.onEntityUpdate(client.id, data)
+    this.onMessage(MsgTopic.PlayerUpdate, (client, data: Array<Game.PlayerMsg>) => {
+      data.forEach(it => {
+        if (!this.state.players.has(it.uid)) return
+        this.onPlayerUpdate(it)
+      })
     })
 
-    this.onMessage(MsgTopic.ObjectInteracted, (client, data) => {
-      this.handleObjectInteract(client, data)
+    this.onMessage(MsgTopic.PropInteracted, (client, data) => {
+      this.handlePropInteract(client, data)
     })
 
     this.onMessage(MsgTopic.Transition, (client, data: Vector[]) => {
       if (data == null || data.length < 2) { return }
 
-      this.onIslandUpdate(client, data[0] as Vector2, data[1] as Vector3)
+      this.onIslandUpdate(client, data[0] as V2, data[1] as V3)
     })
   }
 
-  private onEntityUpdate(clientId: string, data: any) {
-    let state2Update = this.state.networkedUsers.get(`${data[0]}`)
-    let startIdx = 1
+  private onPlayerUpdate(msg: Game.PlayerMsg) {
+    let player = this.state.players.get(msg.uid)
 
-    for (let i = startIdx; i < data.length; ++i) {
-      const property = data[i]
-      let updateVal = data[i + 1]
-      if (updateVal === 'inc') {
-        updateVal = data[i + 2]
-        i++
-      }
-
-      (state2Update as any)[property] = updateVal
+    if (msg.pos) {
+      player.px = msg.pos.x
+      player.py = msg.pos.y
+      player.pz = msg.pos.z
     }
 
-    state2Update.timestamp = parseFloat(this.state.serverTime.toString())
+    if (msg.dir) {
+      player.dx = msg.dir.x
+      player.dy = msg.dir.y
+      player.dz = msg.dir.z
+    }
+
+    player.state = msg.state
+
+    player.timestamp = parseFloat(this.state.serverTime.toString())
   }
 
-  private async handleObjectInteract(client: Client, data: Array<any>) {
-    if (!this.state.interactableItems.has(data[0])) {
+  private async handlePropInteract(client: Client, data: Array<any>) {
+    if (!this.state.props.has(data[0])) {
       let interactable = getStateForType(data[1])
       interactable.assign({ id: data[0], inUse: false })
-      this.state.interactableItems.set(data[0], interactable)
+      this.state.props.set(data[0], interactable)
     }
 
-    let interactable = this.state.interactableItems.get(data[0])
+    let interactable = this.state.props.get(data[0])
     if (interactable.inUse) {
 
     } else {
-      let interactableState = this.state.networkedUsers.get(client.id)
+      let interactableState = this.state.players.get(client.id)
       if (interactableState != null && interactable != null) {
         if (this.handleObjectCost(interactable, interactableState)) {
           interactable.inUse = true
           interactable.availableTimestamp = this.state.serverTime + interactable.useDuration
 
-          this.broadcast(MsgTopic.ObjectUsed, { interactedObjectId: interactable.id, interactStateId: interactableState.id })
+          this.broadcast(MsgTopic.PropUsed, { interactedObjectId: interactable.id, interactStateId: interactableState.clientId })
 
-          let account = await DI.accountRepo.findOne({ activeSessionId: client.sessionId })
-          let user = await DI.userRepo.findOne({ accountId: account.id })
-          if (user) {
-            user.coins = interactableState.coins
-            await DI.em.flush()
-          }
+          // let account = await DI.accountRepo.findOne({ activeSessionId: client.sessionId })
+          // let user = await DI.userRepo.findOne({ accountId: account.id })
+          // if (user) {
+          //   // 
+          //   await DI.em.flush()
+          // }
         }
       }
     }
   }
 
-  private async onIslandUpdate(client: Client, grid: Vector2, position: Vector3) {
-    if (!this.state.networkedUsers.has(client.sessionId)) {
+  private async onIslandUpdate(client: Client, grid: V2, position: V3) {
+    if (!this.state.players.has(client.sessionId)) {
       console.error(`*** On Grid Update -  User not in room - can't update their grid! - ${client.sessionId} ***`)
       return
     }
@@ -194,72 +192,61 @@ export class IslandRoom extends Room<RoomState> {
       return
     }
 
-    let account = await DI.accountRepo.findOne({ activeSessionId: client.sessionId })
-    if (account == null) {
-      console.error(`*** On Grid Update - Error finding player! - ${client.sessionId} ***`)
-      return
-    }
-    let user = await DI.userRepo.findOne({ accountId: account.id })
-    let progress = user ? user.progress : '0,0'
+    // let account = await DI.accountRepo.findOne({ activeSessionId: client.sessionId })
+    // if (account == null) {
+    //   console.error(`*** On Grid Update - Error finding player! - ${client.sessionId} ***`)
+    //   return
+    // }
+    // let user = await DI.userRepo.findOne({ accountId: account.id })
+    // // let progress = user ? user.progress : '0,0'
 
-    let curGrid: string[] = progress.split(',')
-    let curX = Number(curGrid[0])
-    let curY = Number(curGrid[1])
-    let newGrid = new Vector2(curX + grid.x, curY + grid.y)
 
-    if (isNaN(newGrid.x) || isNaN(newGrid.y)) {
-      console.error(`*** On Grid Update - Error calculating new grid position! X = ${newGrid.x}  Y = ${newGrid.y} ***`)
-      return
-    }
+    // let reservation = await matchMaker.joinOrCreate('island', str)
+    // if (reservation == null) {
+    //   console.error(`*** On Grid Update - Error getting seat reservation at grid \"${str}\" ***`)
+    //   return
+    // }
 
-    let str = `${newGrid.x},${newGrid.y}`
+    // account.pendingSessionId = reservation.sessionId
 
-    let reservation = await matchMaker.joinOrCreate('island_room', str)
-    if (reservation == null) {
-      console.error(`*** On Grid Update - Error getting seat reservation at grid \"${str}\" ***`)
-      return
-    }
+    // user.progress = str
+    // user.prevGrid = progress
+    // user.position = new Position().assign(position)
+    // user.rotation = this.state.getUserRotation(client.sessionId)
+    // user.updatedAt = Date.now()
 
-    account.pendingSessionId = reservation.sessionId
+    // await DI.em.flush()
 
-    user.progress = str
-    user.prevGrid = progress
-    user.position = new Position().assign(position)
-    user.rotation = this.state.getUserRotation(client.sessionId)
-    user.updatedAt = Date.now()
-
-    await DI.em.flush()
-
-    client.send(MsgTopic.EnterIsland, {
-      newGridPos: newGrid,
-      prevGridPos: new Vector2(curX, curY),
-      reservation
-    })
+    // client.send(MsgTopic.EnterIsland, {
+    //   newGridPos: newGrid,
+    //   prevGridPos: new V2(curX, curY),
+    //   reservation
+    // })
   }
 
-  private handleObjectCost(object: InteractableState, user: NetworkedEntityState): boolean {
+  private handleObjectCost(object: PropState, user: PlayerState): boolean {
     let cost = object.coinChange
     let worked = false
 
-    if (cost >= 0) {
-      user.coins += cost
-      worked = true
-    }
+    // if (cost >= 0) {
+    //   user.coins += cost
+    //   worked = true
+    // }
 
-    if (cost < 0) {
-      if (Math.abs(cost) <= user.coins) {
-        user.coins += cost
-        worked = true
-      } else {
-        worked = false
-      }
-    }
+    // if (cost < 0) {
+    //   if (Math.abs(cost) <= user.coins) {
+    //     user.coins += cost
+    //     worked = true
+    //   } else {
+    //     worked = false
+    //   }
+    // }
 
     return worked
   }
 
   private checkObjectReset() {
-    this.state.interactableItems.forEach(it => {
+    this.state.props.forEach(it => {
       if (it.inUse && it.availableTimestamp <= this.state.serverTime) {
         it.inUse = false
         it.availableTimestamp = 0

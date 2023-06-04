@@ -3,11 +3,11 @@ import { BodyParam, Controller, Get, Post, QueryParam } from 'lynx-express-mvc'
 import md5 from 'md5'
 import { DI } from '../config/db.config'
 import { AccountPO, ProfilePO } from '../entity/User'
-import { RemoteApi } from '../model/RemoteApi'
+import { RemoteApi } from '../model/api'
 import { Position } from '../room/schema/Position'
 import { Rotation } from '../room/schema/Rotation'
 import { po2vo } from '../main'
-import { User } from '../model/User'
+import { User } from '../model/user.model'
 
 
 @Controller(RemoteApi.User.BasePath)
@@ -61,30 +61,28 @@ export class UserController {
       await DI.em.flush()
 
       account = await DI.accountRepo.findOne({ phone: data.phone })
-      console.log(account.id)
       user = DI.userRepo.create({ username: data.username, accountId: account.id })
 
-      seatReservation = await matchMaker.joinOrCreate('islandRoom', user.progress)
-      this.updateUserForNewSession(account, seatReservation.sessionId)
-
-      user.position = new Position().assign({ x: 0, y: 1, z: 0 })
-      user.rotation = new Rotation().assign({ x: 0, y: 0, z: 0 })
-
+      // seatReservation = await matchMaker.joinOrCreate('islandRoom', user.progress)
+      // this.updateUserForNewSession(account, seatReservation.sessionId)
       await DI.em.flush()
     } else {
       throw 'User with that name already exists!'
     }
 
-    const userData = { ...user, ...account }
-    delete userData._id
-    delete userData.phone
-    delete userData.encryptPhone
-    delete userData.encryptPwd
-    delete userData.createdAt
-    delete userData.updatedAt
-    userData.id = user.id
+    let accountVO: User.Account = {
+      id: account.id,
+      displayPhone: account.displayPhone
+    }
 
-    return { seatReservation, user: userData }
+    let profileVO: User.Profile = {
+      id: user.id,
+      username: user.username,
+      prefab: user.prefab,
+      skin: user.skin
+    }
+
+    return Object.assign(accountVO, profileVO)
   }
 
   @Post(RemoteApi.User.Login)
@@ -124,18 +122,7 @@ export class UserController {
       throw '用户已登录'
     }
 
-    if (account.pendingSessionId && account.pendingSessionTimestamp && (Date.now() - account.pendingSessionTimestamp) <= 30000) {
-      let timeLeft = (Date.now() - account.pendingSessionTimestamp) / 1000
-      throw `失效期未过, 请${timeLeft}后再重试!`
-    }
-
-    let reservation = await matchMaker.joinOrCreate('islandRoom', user.progress)
-    this.updateUserForNewSession(account, reservation.sessionId)
-
     await DI.em.flush()
-
-
-    // po2vo<>()
 
     let accountVO: User.Account = {
       id: account.id,
@@ -144,7 +131,9 @@ export class UserController {
 
     let profileVO: User.Profile = {
       id: user.id,
-      username: user.username
+      username: user.username,
+      prefab: user.prefab,
+      skin: user.skin
     }
 
     return Object.assign(accountVO, profileVO)

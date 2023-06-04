@@ -1,5 +1,5 @@
 import { Client, Room } from 'colyseus'
-import { ChatMessage, ChatQueue, ChatRoomState } from './schema/RoomState'
+import { ChatMessage, ChatQueue, ChatRoomState } from './schema/IslandState'
 
 
 export class ChatRoom extends Room<ChatRoomState> {

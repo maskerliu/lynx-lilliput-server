@@ -19,6 +19,8 @@ const CorsOpt: CorsOptions = {
     `http://localhost:7456`,
     `http://localhost:7457`,
     'http://192.168.37.61:7456',
+    'http://192.168.71.24:7456',
+    'http://192.168.24.77:7456',
     'http://192.168.37.61:7457'
   ]
 }
@@ -37,7 +39,7 @@ class BizServer {
     this.expressApp.use(cors(CorsOpt))
     this.expressApp.use(express.urlencoded({ limit: '50mb', extended: true, parameterLimit: 50000 }))
     this.expressApp.use(express.json({ type: ['application/json'], limit: '50mb' }))
-    this.expressApp.use('/colyseus', monitor())
+    this.expressApp.use('/monitor', monitor())
 
     this.expressApp.all('*', (req, resp) => {
       this.bizRouter.route(req, resp)
@@ -46,7 +48,7 @@ class BizServer {
 
     this.gameApp = new Server({ server: createServer(this.expressApp) })
     this.gameApp.define('chatRoom', ChatRoom).filterBy(['roomId'])
-    this.gameApp.define('islandRoom', IslandRoom).filterBy(['progress'])
+    this.gameApp.define('island', IslandRoom).filterBy(['islandId'])
   }
 
   async start() {

@@ -1,4 +1,4 @@
-import { InteractableState } from "./schema/RoomState";
+import { InteractableState } from "./schema/IslandState";
 
 
 export function getStateForType(type: string): InteractableState {

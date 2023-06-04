@@ -4,5 +4,5 @@ export namespace User {
 
   export type Account = Pick<AccountPO, 'id' | 'displayPhone'>
 
-  export type Profile = Pick<ProfilePO, 'id' | 'username' | 'avatar'>
+  export type Profile = Pick<ProfilePO, 'id' | 'username' | 'prefab' | 'skin'>
 }

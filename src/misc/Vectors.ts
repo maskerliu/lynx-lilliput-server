@@ -3,7 +3,7 @@ export class Vector {
 
 }
 
-export class Vector3 extends Vector {
+export class V3 extends Vector {
   x: number
   y: number
   z: number
@@ -17,7 +17,7 @@ export class Vector3 extends Vector {
   }
 }
 
-export class Vector2 extends Vector {
+export class V2 extends Vector {
   x: number
   y: number
 

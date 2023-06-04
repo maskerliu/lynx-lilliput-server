@@ -17,4 +17,5 @@ export interface MapItem {
   z: number
   prefab: string
   angle: number
+  skin: number
 }

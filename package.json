@@ -20,7 +20,7 @@
   },
   "homepage": "https://github.com/maskerliu/lynx-lilliput-server#readme",
   "dependencies": {
-    "@colyseus/monitor": "^0.14.22",
+    "@colyseus/monitor": "^0.15.1",
     "@mikro-orm/core": "^5.7.4",
     "@mikro-orm/mongodb": "^5.7.4",
     "colyseus": "^0.15.0",
